@@ -17,6 +17,7 @@ package statestore
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -281,6 +282,12 @@ func (rb *redisBackend) UpdateAssignments(ctx context.Context, req *pb.AssignTic
 	}
 
 	for _, ticket := range tickets {
+		if ticket.Assignment != nil {
+			if len(ticket.Assignment.Extensions) != 0 || strings.TrimSpace(ticket.Assignment.Connection) != "" {
+				redisLogger.WithField("assignment", ticket.Assignment).Warnf("ticket %s already has an assignment set", ticket.Id)
+				continue
+			}
+		}
 		ticket.Assignment = idToA[ticket.Id]
 
 		var ticketByte []byte
