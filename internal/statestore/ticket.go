@@ -281,14 +281,18 @@ func (rb *redisBackend) UpdateAssignments(ctx context.Context, req *pb.AssignTic
 		return nil, nil, errors.Wrap(err, "error starting redis multi")
 	}
 
+	alreadyAssigned := make(map[string]bool)
 	for _, ticket := range tickets {
+		alreadyAssigned[ticket.Id] = false
 		if ticket.Assignment != nil {
 			if len(ticket.Assignment.Extensions) != 0 || strings.TrimSpace(ticket.Assignment.Connection) != "" {
 				redisLogger.WithField("assignment", ticket.Assignment).Warnf("ticket %s already has an assignment set", ticket.Id)
-				continue
+				alreadyAssigned[ticket.Id] = true
 			}
 		}
-		ticket.Assignment = idToA[ticket.Id]
+		if !alreadyAssigned[ticket.Id] {
+			ticket.Assignment = idToA[ticket.Id]
+		}
 
 		var ticketByte []byte
 		ticketByte, err = proto.Marshal(ticket)
@@ -327,7 +331,9 @@ func (rb *redisBackend) UpdateAssignments(ctx context.Context, req *pb.AssignTic
 		if v != "OK" {
 			return nil, nil, status.Errorf(codes.Internal, "unexpected response from redis: %s", v)
 		}
-		assignedTickets = append(assignedTickets, ticket)
+		if !alreadyAssigned[ticket.Id] {
+			assignedTickets = append(assignedTickets, ticket)
+		}
 	}
 
 	return resp, assignedTickets, nil
