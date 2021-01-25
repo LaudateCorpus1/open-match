@@ -878,11 +878,11 @@ func testConnect(t *testing.T, withSentinel bool, withPassword string) {
 	rb, ok := is.s.(*redisBackend)
 	require.True(t, ok)
 
-	conn, err := rb.redisPool.GetContext(ctx)
-	require.NoError(t, err)
+	conn, err := rb.GetConnection(ctx)
 	require.NotNil(t, conn)
+	require.Nil(t, err)
 
-	rply, err := redis.String(conn.Do("PING"))
+	rply, err := conn.Ping(ctx).Result()
 	require.Nil(t, err)
 	require.Equal(t, "PONG", rply)
 }
@@ -923,8 +923,7 @@ func createRedis(t *testing.T, withSentinel bool, withPassword string) (config.V
 		cfg.Set("redis.sentinelPort", s.Port())
 		cfg.Set("redis.sentinelMaster", s.MasterInfo().Name)
 		cfg.Set("redis.sentinelEnabled", true)
-		// TODO: enable sentinel auth test cases when the library support it.
-		cfg.Set("redis.sentinelUsePassword", false)
+		cfg.Set("redis.sentinelUsePassword", true)
 	} else {
 		cfg.Set("redis.hostname", mredis.Host())
 		cfg.Set("redis.port", mredis.Port())

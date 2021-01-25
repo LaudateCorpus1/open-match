@@ -45,12 +45,14 @@ func start(t *testing.T, eval evaluator.Evaluator, mmf mmfService.MatchFunction)
 	}
 
 	t.Cleanup(func() {
+		ctx := context.Background()
 		pool := statestore.GetRedisPool(cfg)
-		conn, err := pool.GetContext(context.Background())
+		conn := pool.Conn(ctx)
+		_, err := conn.Ping(ctx).Result()
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = conn.Do("FLUSHALL")
+		_, err = conn.FlushAll(ctx).Result()
 		if err != nil {
 			t.Fatal(err)
 		}

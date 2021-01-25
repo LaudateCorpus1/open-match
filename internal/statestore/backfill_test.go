@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
 	"github.com/golang/protobuf/ptypes/wrappers"
-	"github.com/gomodule/redigo/redis"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -48,10 +48,9 @@ func TestCreateBackfillLastAckTime(t *testing.T) {
 	require.NoError(t, err)
 
 	pool := GetRedisPool(cfg)
-	conn := pool.Get()
 
 	// test that Backfill last acknowledged is in a sorted set
-	ts, redisErr := redis.Int64(conn.Do("ZSCORE", backfillLastAckTime, bfID))
+	ts, redisErr := pool.ZScore(ctx, backfillLastAckTime, bfID).Result()
 	require.NoError(t, redisErr)
 	require.True(t, ts > 0, "timestamp is not valid")
 }
@@ -216,7 +215,10 @@ func TestUpdateBackfillExpiredBackfillErrExpected(t *testing.T) {
 	defer service.Close()
 	ctx := utilTesting.NewContext(t)
 
-	rc, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")))
+	rc := redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")),
+	})
+	_, err := rc.Ping(ctx).Result()
 	require.NoError(t, err)
 
 	bfID := "bf1"
@@ -227,7 +229,10 @@ func TestUpdateBackfillExpiredBackfillErrExpected(t *testing.T) {
 	}
 
 	// add expired but acknowledged backfill
-	_, err = rc.Do("ZADD", bfLastAck, 123, bfID)
+	_, err = rc.ZAdd(ctx, bfLastAck, &redis.Z{
+		Score:  123,
+		Member: bfID,
+	}).Result()
 	require.NoError(t, err)
 
 	err = service.UpdateBackfill(ctx, &bf, nil)
@@ -270,9 +275,12 @@ func TestGetBackfill(t *testing.T) {
 	err := service.CreateBackfill(ctx, expectedBackfill, expectedTicketIDs)
 	require.NoError(t, err)
 
-	c, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")))
+	c := redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")),
+	})
+	_, err = c.Ping(ctx).Result()
 	require.NoError(t, err)
-	_, err = c.Do("SET", "wrong-type-key", "wrong-type-value")
+	_, err = c.Set(ctx, "wrong-type-key", "wrong-type-value", 0).Result()
 	require.NoError(t, err)
 
 	var testCases = []struct {
@@ -358,9 +366,8 @@ func TestDeleteBackfill(t *testing.T) {
 	require.NoError(t, err)
 
 	pool := GetRedisPool(cfg)
-	conn := pool.Get()
 
-	ts, err := redis.Int64(conn.Do("ZSCORE", backfillLastAckTime, bfID))
+	ts, err := pool.ZScore(ctx, backfillLastAckTime, bfID).Result()
 	require.NoError(t, err)
 	require.True(t, ts > 0, "timestamp is not valid")
 
@@ -395,9 +402,9 @@ func TestDeleteBackfill(t *testing.T) {
 				require.Error(t, errGetTicket)
 				require.Equal(t, codes.NotFound.String(), status.Convert(errGetTicket).Code().String())
 				// test that Backfill also deleted from last acknowledged sorted set
-				_, err = redis.Int64(conn.Do("ZSCORE", backfillLastAckTime, tc.backfillID))
+				_, err = pool.ZScore(ctx, backfillLastAckTime, tc.backfillID).Result()
 				require.Error(t, err)
-				require.Equal(t, err.Error(), "redigo: nil returned")
+				require.Equal(t, err.Error(), "redis: nil")
 			}
 		})
 	}
@@ -493,9 +500,9 @@ func TestUpdateAcknowledgmentTimestamp(t *testing.T) {
 
 	// Check that Acknowledge timestamp stored valid in Redis
 	pool := GetRedisPool(cfg)
-	conn := pool.Get()
-	res, err := redis.Int64(conn.Do("ZSCORE", backfillLastAckTime, bf1))
+	resF, err := pool.ZScore(ctx, backfillLastAckTime, bf1).Result()
 	require.NoError(t, err)
+	res := int64(resF)
 	// Create a time.Time from Unix nanoseconds and make sure, that time difference
 	// is less than one second
 	t2 := time.Unix(res/1e9, res%1e9)
@@ -510,14 +517,20 @@ func TestUpdateAcknowledgmentTimestamptExpiredBackfillErrExpected(t *testing.T) 
 	defer service.Close()
 	ctx := utilTesting.NewContext(t)
 
-	rc, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")))
+	rc := redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")),
+	})
+	_, err := rc.Ping(ctx).Result()
 	require.NoError(t, err)
 
 	bfID := "bf1"
 	bfLastAck := "backfill_last_ack_time"
 
 	// add expired but acknowledged backfill
-	_, err = rc.Do("ZADD", bfLastAck, 123, bfID)
+	_, err = rc.ZAdd(ctx, bfLastAck, &redis.Z{
+		Score:  123,
+		Member: bfID,
+	}).Result()
 	require.NoError(t, err)
 
 	err = service.UpdateAcknowledgmentTimestamp(ctx, bfID)
@@ -555,20 +568,25 @@ func TestGetExpiredBackfillIDs(t *testing.T) {
 	cfg, closer := createRedis(t, false, "")
 	defer closer()
 
+	ctx := utilTesting.NewContext(t)
 	expID := "expired"
 	goodID := "fresh"
 	pool := GetRedisPool(cfg)
-	conn := pool.Get()
-	_, err := conn.Do("ZADD", backfillLastAckTime, 123, expID)
+	_, err := pool.ZAdd(ctx, backfillLastAckTime, &redis.Z{
+		Score:  123,
+		Member: expID,
+	}).Result()
 	require.NoError(t, err)
-	_, err = conn.Do("ZADD", backfillLastAckTime, time.Now().UnixNano(), goodID)
+	_, err = pool.ZAdd(ctx, backfillLastAckTime, &redis.Z{
+		Score:  float64(time.Now().UnixNano()),
+		Member: goodID,
+	}).Result()
 	require.NoError(t, err)
 
 	// GetExpiredBackfillIDs should return only expired BF
 	service := New(cfg)
 	require.NotNil(t, service)
 	defer service.Close()
-	ctx := utilTesting.NewContext(t)
 	bfIDs, err := service.GetExpiredBackfillIDs(ctx)
 	require.NoError(t, err)
 	require.Len(t, bfIDs, 1)
@@ -585,9 +603,12 @@ func TestIndexBackfill(t *testing.T) {
 	t.Run("WithValidContext", func(t *testing.T) {
 		ctx := utilTesting.NewContext(t)
 		generateBackfills(ctx, t, service, 2)
-		c, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")))
+		c := redis.NewClient(&redis.Options{
+			Addr: fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")),
+		})
+		_, err := c.Ping(ctx).Result()
 		require.NoError(t, err)
-		idsIndexed, err := redis.Strings(c.Do("HKEYS", allBackfills))
+		idsIndexed, err := c.HKeys(ctx, allBackfills).Result()
 		require.NoError(t, err)
 		require.Len(t, idsIndexed, 2)
 		require.Equal(t, "mockBackfillID-0", idsIndexed[0])
@@ -619,9 +640,12 @@ func TestDeindexBackfill(t *testing.T) {
 
 	generateBackfills(ctx, t, service, 2)
 
-	c, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")))
+	c := redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")),
+	})
+	_, err := c.Ping(ctx).Result()
 	require.NoError(t, err)
-	idsIndexed, err := redis.Strings(c.Do("HKEYS", allBackfills))
+	idsIndexed, err := c.HKeys(ctx, allBackfills).Result()
 	require.NoError(t, err)
 	require.Len(t, idsIndexed, 2)
 	require.Equal(t, "mockBackfillID-0", idsIndexed[0])
@@ -630,7 +654,7 @@ func TestDeindexBackfill(t *testing.T) {
 	// deindex and check that there is only 1 backfill in the returned slice
 	err = service.DeindexBackfill(ctx, "mockBackfillID-1")
 	require.NoError(t, err)
-	idsIndexed, err = redis.Strings(c.Do("HKEYS", allBackfills))
+	idsIndexed, err = c.HKeys(ctx, allBackfills).Result()
 	require.NoError(t, err)
 	require.Len(t, idsIndexed, 1)
 	require.Equal(t, "mockBackfillID-0", idsIndexed[0])
@@ -704,7 +728,10 @@ func BenchmarkCleanupBackfills(b *testing.B) {
 	defer service.Close()
 	ctx := utilTesting.NewContext(t)
 
-	rc, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")))
+	rc := redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")),
+	})
+	_, err := rc.Ping(ctx).Result()
 	require.NoError(t, err)
 
 	createStaleBF := func(bfID string, ticketIDs ...string) {
@@ -715,7 +742,10 @@ func BenchmarkCleanupBackfills(b *testing.B) {
 		err = service.CreateBackfill(ctx, bf, ticketIDs)
 		require.NoError(t, err)
 
-		_, err = rc.Do("ZADD", "backfill_last_ack_time", 123, bfID)
+		_, err = rc.ZAdd(ctx, "backfill_last_ack_time", &redis.Z{
+			Score:  123,
+			Member: bfID,
+		}).Result()
 		require.NoError(t, err)
 
 		err = service.AddTicketsToPendingRelease(ctx, ticketIDs)
@@ -741,9 +771,7 @@ func TestCleanupBackfills(t *testing.T) {
 	require.NotNil(t, service)
 	defer service.Close()
 	ctx := utilTesting.NewContext(t)
-
-	rc, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", cfg.GetString("redis.hostname"), cfg.GetString("redis.port")))
-	require.NoError(t, err)
+	rc := GetRedisPool(cfg)
 
 	bfID := "mockBackfill-1"
 	ticketIDs := []string{"t1", "t2"}
@@ -757,11 +785,11 @@ func TestCleanupBackfills(t *testing.T) {
 	}
 
 	// ARRANGE
-	err = service.CreateBackfill(ctx, bf, ticketIDs)
+	err := service.CreateBackfill(ctx, bf, ticketIDs)
 	require.NoError(t, err)
 
 	// add expired but acknowledged backfill
-	_, err = rc.Do("ZADD", bfLastAck, 123, bfID)
+	_, err = rc.ZAdd(ctx, bfLastAck, &redis.Z{Score: 123, Member: bfID}).Result()
 	require.NoError(t, err)
 
 	err = service.AddTicketsToPendingRelease(ctx, ticketIDs)
@@ -771,7 +799,7 @@ func TestCleanupBackfills(t *testing.T) {
 	require.NoError(t, err)
 
 	// backfill is properly indexed
-	index, err := redis.StringMap(rc.Do("HGETALL", allBackfills))
+	index, err := rc.HGetAll(ctx, allBackfills).Result()
 	require.NoError(t, err)
 	require.Len(t, index, 1)
 	require.Equal(t, strconv.Itoa(int(generation)), index[bfID])
@@ -782,7 +810,7 @@ func TestCleanupBackfills(t *testing.T) {
 
 	// ASSERT
 	// backfill must be deindexed
-	index, err = redis.StringMap(rc.Do("HGETALL", allBackfills))
+	index, err = rc.HGetAll(ctx, allBackfills).Result()
 	require.NoError(t, err)
 	require.Len(t, index, 0)
 
@@ -792,12 +820,18 @@ func TestCleanupBackfills(t *testing.T) {
 	require.Equal(t, "Backfill id: mockBackfill-1 not found", status.Convert(err).Message())
 
 	// no records in backfill sorted set left
-	expiredBackfillIds, err := redis.Strings(rc.Do("ZRANGEBYSCORE", bfLastAck, 0, 200))
+	expiredBackfillIds, err := rc.ZRangeByScore(ctx, bfLastAck, &redis.ZRangeBy{
+		Min: fmt.Sprint(0),
+		Max: fmt.Sprint(200),
+	}).Result()
 	require.NoError(t, err)
 	require.Empty(t, expiredBackfillIds)
 
 	// no records in tickets sorted set left
-	pendingTickets, err := redis.Strings(rc.Do("ZRANGEBYSCORE", proposedTicketIDs, 0, time.Now().UnixNano()))
+	pendingTickets, err := rc.ZRangeByScore(ctx, proposedTicketIDs, &redis.ZRangeBy{
+		Min: fmt.Sprint(0),
+		Max: fmt.Sprint(time.Now().UnixNano()),
+	}).Result()
 	require.NoError(t, err)
 	require.Empty(t, pendingTickets)
 }
