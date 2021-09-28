@@ -231,6 +231,12 @@ func callGrpcMmf(ctx context.Context, cc *rpc.ClientCache, profile *pb.MatchProf
 
 	stream, err := client.Run(ctx, &pb.RunRequest{Profile: profile})
 	if err != nil {
+		s, _ := status.FromError(err)
+		// remove the connection from the client cache if the connection is currently unavailable
+		// will force the recreate on the next execution
+		if s.Code() == codes.Unavailable {
+			cc.RemoveConnectionFromCache(address)
+		}
 		err = errors.Wrap(err, "failed to run match function for profile")
 		if ctx.Err() != nil {
 			// gRPC likes to suppress the context's error, so stop that.

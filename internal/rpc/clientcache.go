@@ -70,6 +70,10 @@ func (cc *ClientCache) GetHTTP(address string) (*http.Client, string, error) {
 	return c.client, c.baseURL, nil
 }
 
+func (cc *ClientCache) RemoveConnectionFromCache(address string){
+	cc.cache.Delete(address)
+}
+
 // NewClientCache creates a cache with all the clients.
 func NewClientCache(cfg config.View) *ClientCache {
 	return &ClientCache{
