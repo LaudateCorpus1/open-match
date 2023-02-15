@@ -39,7 +39,7 @@ require (
 	github.com/imdario/mergo v0.3.11 // indirect
 	github.com/pelletier/go-toml v1.8.1 // indirect
 	github.com/pkg/errors v0.9.1
-	github.com/prometheus/client_golang v1.8.0
+	github.com/prometheus/client_golang v1.11.1
 	github.com/rs/xid v1.2.1
 	github.com/sirupsen/logrus v1.7.0
 	github.com/spf13/afero v1.4.1 // indirect
@@ -49,13 +49,12 @@ require (
 	github.com/stretchr/testify v1.6.1
 	go.opencensus.io v0.22.5
 	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
-	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
-	golang.org/x/sys v0.0.0-20201112073958-5cba982894dd // indirect
+	golang.org/x/sync v0.0.0-20201207232520-09787c993a3a
 	golang.org/x/text v0.3.4 // indirect
 	google.golang.org/api v0.35.0 // indirect
 	google.golang.org/genproto v0.0.0-20201112120144-2985b7af83de
 	google.golang.org/grpc v1.33.2
-	google.golang.org/protobuf v1.25.0
+	google.golang.org/protobuf v1.26.0-rc.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	k8s.io/api v0.0.0-20191004102349-159aefb8556b // kubernetes-1.14.10
 	k8s.io/apimachinery v0.0.0-20191004074956-c5d2f014d689 // kubernetes-1.14.10
