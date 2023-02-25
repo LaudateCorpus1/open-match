@@ -50,7 +50,7 @@ require (
 	go.opencensus.io v0.22.5
 	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
-	golang.org/x/sys v0.0.0-20201112073958-5cba982894dd // indirect
+	golang.org/x/sys v0.1.0 // indirect
 	golang.org/x/text v0.3.4 // indirect
 	google.golang.org/api v0.35.0 // indirect
 	google.golang.org/genproto v0.0.0-20201112120144-2985b7af83de
